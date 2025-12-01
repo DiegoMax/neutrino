@@ -6,10 +6,12 @@ Neutrino es una herramienta simple en Python diseñada para monitorear el estado
 
 1.  **Monitoreo de Red**: Hace ping a un dispositivo que solo está en línea cuando hay energía de la Red.
 2.  **Monitoreo de Generador**: Hace ping a un dispositivo que solo está en línea cuando el Generador está funcionando.
-3.  **Alertas**:
+3.  **Validación (Debounce)**: Para evitar falsos positivos por fallos temporales de red, un dispositivo solo se considera "ARRIBA" o "ABAJO" después de **3 pings consecutivos** con el mismo resultado.
+4.  **Alertas**:
     - Envía alertas informativas cuando la Red o el Generador cambian de estado (Arriba/Abajo).
     - Si la Red cae y el Generador no arranca dentro de **5 minutos** (configurable), se envía una alerta crítica.
     - La alerta crítica se repite cada **1 minuto** durante los primeros 10 minutos, y luego cada **10 minutos**.
+    - Todas las alertas incluyen el nombre de la ubicación configurada.
 
 ## Instalación
 
@@ -44,8 +46,10 @@ Neutrino es una herramienta simple en Python diseñada para monitorear el estado
 
     - `GRID_IP`: Dirección IP del dispositivo alimentado por la Red.
     - `GENERATOR_IP`: Dirección IP del dispositivo alimentado por el Generador.
+    - `LOCATION_NAME`: Nombre de la ubicación (ej. "Sitio Central") para identificar las alertas.
     - `TELEGRAM_BOT_TOKEN`: Tu Token del Bot de Telegram.
     - `TELEGRAM_CHAT_ID`: Tu ID de Chat de Telegram.
+    - `CHECK_INTERVAL`: Intervalo en segundos entre pings (por defecto: 5).
     - `TIMEOUT_MINUTES`: Tiempo de espera antes de alertar (por defecto: 5).
 
 ## Ejecución Manual

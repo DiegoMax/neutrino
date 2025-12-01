@@ -12,9 +12,10 @@ load_dotenv()
 # Configuration
 GRID_IP = os.getenv('GRID_IP')
 GENERATOR_IP = os.getenv('GENERATOR_IP')
+LOCATION_NAME = os.getenv('LOCATION_NAME', 'Unknown Location')
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', 10)) # Seconds between checks
+CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', 5)) # Seconds between checks
 TIMEOUT_MINUTES = int(os.getenv('TIMEOUT_MINUTES', 5))
 
 # Setup Logging
@@ -33,15 +34,17 @@ def send_telegram_alert(message):
         logging.error("Credenciales de Telegram no configuradas.")
         return
 
+    full_message = f"[{LOCATION_NAME}] {message}"
+
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": message
+        "text": full_message
     }
     try:
         response = requests.post(url, json=payload, timeout=10)
         response.raise_for_status()
-        logging.info(f"Alerta de Telegram enviada: {message}")
+        logging.info(f"Alerta de Telegram enviada: {full_message}")
     except requests.exceptions.RequestException as e:
         logging.error(f"Error al enviar alerta de Telegram: {e}")
 
@@ -55,9 +58,43 @@ def is_reachable(ip_address):
         logging.error(f"Error haciendo ping a {ip_address}: {e}")
         return False
 
+class DeviceMonitor:
+    def __init__(self, ip_address, required_consecutive=3):
+        self.ip_address = ip_address
+        self.required_consecutive = required_consecutive
+        self.consecutive_success = 0
+        self.consecutive_fail = 0
+        self.is_up = None # None indicates unknown initial state
+
+    def update(self):
+        """
+        Pings the device and updates the internal state based on consecutive results.
+        Returns the current confirmed state (True/False) or None if not yet confirmed.
+        """
+        reachable = is_reachable(self.ip_address)
+        
+        if reachable:
+            self.consecutive_success += 1
+            self.consecutive_fail = 0
+        else:
+            self.consecutive_fail += 1
+            self.consecutive_success = 0
+        
+        # Check if state should change
+        if self.consecutive_success >= self.required_consecutive:
+            self.is_up = True
+        elif self.consecutive_fail >= self.required_consecutive:
+            self.is_up = False
+            
+        return self.is_up
+
 def main():
     logging.info("Monitoreo Neutrino Iniciado")
     logging.info(f"Monitoreando Red: {GRID_IP}, Generador: {GENERATOR_IP}")
+
+    # Initialize Device Monitors
+    grid_monitor = DeviceMonitor(GRID_IP)
+    generator_monitor = DeviceMonitor(GENERATOR_IP)
 
     # State tracking
     grid_down_time = None
@@ -70,8 +107,15 @@ def main():
     last_critical_alert_time = None
 
     while True:
-        grid_up = is_reachable(GRID_IP)
-        generator_up = is_reachable(GENERATOR_IP)
+        # Update monitors
+        grid_up = grid_monitor.update()
+        generator_up = generator_monitor.update()
+
+        # If states are not yet confirmed (initialization phase), wait and retry
+        if grid_up is None or generator_up is None:
+            logging.info("Calibrando estado de dispositivos...")
+            time.sleep(CHECK_INTERVAL)
+            continue
 
         logging.debug(f"Estado - Red: {'ARRIBA' if grid_up else 'ABAJO'}, Generador: {'ARRIBA' if generator_up else 'ABAJO'}")
 
@@ -116,11 +160,6 @@ def main():
             
             if generator_up:
                 # Generator is working, we are safe.
-                # Reset critical alert timer so if it fails later, we start fresh?
-                # Or should we keep the original grid_down_time?
-                # If generator fails *after* running for a while, it is a critical event.
-                # We should probably treat "Generator DOWN while Grid DOWN" as the critical condition.
-                # If Generator is UP, we clear the 'last_critical_alert_time' to allow new alerts if it stops.
                 last_critical_alert_time = None
             else:
                 # CRITICAL CONDITION: Grid DOWN and Generator DOWN
@@ -129,12 +168,6 @@ def main():
                 
                 if elapsed_since_grid_down > timedelta(minutes=TIMEOUT_MINUTES):
                     # We are in the danger zone
-                    
-                    # Calculate how long we have been in the danger zone (time since timeout)
-                    # Actually, the requirement is:
-                    # "repeat the alert every 1 minute for the first 10 mins" (of the critical period? or since grid down?)
-                    # "if more than 5 mintues pass ... then we can assume something is wrong"
-                    # "repeated every 1 minute for the first 10 mins" -> likely first 10 mins of the *alerting* phase.
                     
                     critical_duration = elapsed_since_grid_down - timedelta(minutes=TIMEOUT_MINUTES)
                     should_alert = False
